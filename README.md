@@ -21,4 +21,3 @@ Notes and caveats
 - On WSL, Docker Engine may require Docker Desktop (Windows) or a background daemon depending on your setup. See Docker's WSL documentation for details.
 - The script installs Oh My Zsh non-interactively (it will not change your default shell). To switch to zsh as default: `chsh -s $(which zsh)`.
 - `zsh-syntax-highlighting` is appended to the end of your `.zshrc` (it must be sourced last).
-- Run `chsh -s $(which zsh)` to set the default terminal to zsh

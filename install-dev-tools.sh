@@ -46,13 +46,39 @@ apt_update() {
 
 install_packages() {
   echo "==> Installing base packages"
-  sudo apt-get install -y ca-certificates curl gnupg lsb-release software-properties-common apt-transport-https \
-    build-essential git wget unzip
+  # List of base packages
+  base_pkgs=(ca-certificates curl gnupg lsb-release software-properties-common apt-transport-https build-essential git wget unzip)
+  pkgs_to_install=()
+  for pkg in "${base_pkgs[@]}"; do
+    if dpkg -s "$pkg" >/dev/null 2>&1; then
+      echo "$pkg already installed — skipping."
+    else
+      pkgs_to_install+=("$pkg")
+    fi
+  done
+  if [ "${#pkgs_to_install[@]}" -gt 0 ]; then
+    sudo apt-get install -y "${pkgs_to_install[@]}"
+  else
+    echo "All base packages already installed."
+  fi
 }
 
 install_docker() {
   if command -v docker >/dev/null 2>&1; then
     echo "Docker already installed — skipping Docker installation"
+    return
+  fi
+  # Check if all docker packages are installed
+  docker_pkgs=(docker-ce docker-ce-cli containerd.io docker-compose-plugin)
+  all_installed=true
+  for pkg in "${docker_pkgs[@]}"; do
+    if ! dpkg -s "$pkg" >/dev/null 2>&1; then
+      all_installed=false
+      break
+    fi
+  done
+  if $all_installed; then
+    echo "Docker packages already installed — skipping Docker installation"
     return
   fi
 
@@ -63,7 +89,7 @@ install_docker() {
     "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
     $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
   sudo apt-get update -y
-  sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  sudo apt-get install -y "${docker_pkgs[@]}"
 
   echo "==> Adding $USER_NAME to docker group"
   sudo groupadd -f docker
@@ -86,9 +112,14 @@ install_nvm_and_node() {
   # shellcheck disable=SC1090
   [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 
-  echo "==> Installing latest LTS Node via nvm"
-  nvm install --lts || true
-  nvm alias default 'lts/*' || true
+  # Check if Node LTS is already installed
+  if command -v node >/dev/null 2>&1 && nvm ls --no-colors | grep -q 'lts/*'; then
+    echo "Node LTS already installed via nvm — skipping Node install"
+  else
+    echo "==> Installing latest LTS Node via nvm"
+    nvm install --lts || true
+    nvm alias default 'lts/*' || true
+  fi
 }
 
 install_zsh_and_oh_my_zsh() {
@@ -115,9 +146,13 @@ install_zsh_and_oh_my_zsh() {
   echo "==> Installing zsh-autosuggestions and zsh-syntax-highlighting"
   if [ ! -d "$ZSH_CUSTOM/plugins/zsh-autosuggestions" ]; then
     git clone https://github.com/zsh-users/zsh-autosuggestions "$ZSH_CUSTOM/plugins/zsh-autosuggestions"
+  else
+    echo "zsh-autosuggestions already installed — skipping"
   fi
   if [ ! -d "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting" ]; then
     git clone https://github.com/zsh-users/zsh-syntax-highlighting "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting"
+  else
+    echo "zsh-syntax-highlighting already installed — skipping"
   fi
 
   # Configure .zshrc (idempotent edits)
@@ -170,7 +205,39 @@ post_install_notes() {
   echo "==> Post-install notes"
   echo "- You probably need to log out and log back in (or run: newgrp docker) for docker group membership to take effect."
   echo "- If you're running WSL without systemd, Docker may need a separate Docker Desktop or a background docker daemon. See: https://docs.docker.com/desktop/windows/wsl/"
+  echo "- If you're running WSL without systemd, Docker may need a separate Docker Desktop or a background docker daemon. See: https://docs.docker.com/desktop/windows/wsl/"
   echo "- Oh My Zsh configuration updated in $HOME_DIR/.zshrc. zsh-syntax-highlighting is sourced at the end of the file."
+  echo "- To start using Zsh, either run 'zsh' or make it your default shell with 'chsh -s $(which zsh)."
+}
+
+
+# Track checked out repos in a temp file
+REPOS_CHECKED_OUT_FILE="/tmp/checked_out_repos_$$.txt"
+
+# Use this function to record a checked out repo path
+record_checked_out_repo() {
+  local repo_path="$1"
+  echo "$repo_path" >> "$REPOS_CHECKED_OUT_FILE"
+}
+
+# Cleanup step: Delete only repos checked out during this script
+cleanup_unused_repos() {
+  echo
+  echo "==> Cleanup: Delete repositories checked out during this script run"
+  if [ ! -f "$REPOS_CHECKED_OUT_FILE" ]; then
+    echo "No repositories were checked out during this script run."
+    return
+  fi
+  while IFS= read -r repo; do
+    if [ -d "$repo/.git" ]; then
+      read -rp "Delete repository $repo? [y/N] " delans
+      if [[ "$delans" =~ ^[Yy]$ ]]; then
+        echo "Deleting $repo..."
+        rm -rf "$repo"
+      fi
+    fi
+  done < "$REPOS_CHECKED_OUT_FILE"
+  rm -f "$REPOS_CHECKED_OUT_FILE"
 }
 
 main() {
@@ -180,6 +247,7 @@ main() {
   install_nvm_and_node
   install_zsh_and_oh_my_zsh
   post_install_notes
+  cleanup_unused_repos
   echo "==> Done."
 }
 
